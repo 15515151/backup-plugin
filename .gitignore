@@ -1,0 +1,4 @@
+/config.json
+/.runtime/
+/node_modules/
+*.log

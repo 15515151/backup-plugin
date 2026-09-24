@@ -1,0 +1,26 @@
+{
+  "resticPath": "restic",
+  "backend": "oss",
+  "password": "",
+  "passwordFile": "",
+  "oss": {
+    "endpoint": "https://oss-cn-hangzhou.aliyuncs.com",
+    "region": "oss-cn-hangzhou",
+    "bucket": "",
+    "prefix": "jiuli",
+    "accessKeyId": "",
+    "accessKeySecret": "",
+    "sessionToken": ""
+  },
+  "localRepository": "",
+  "snapshotTag": "jiuli-backup",
+  "hostname": "",
+  "extraExcludes": [],
+  "schedule": {
+    "enabled": false,
+    "cron": "0 0 4 * * *"
+  },
+  "timeoutMinutes": 120,
+  "limitUploadKiB": 0,
+  "limitDownloadKiB": 0
+}
