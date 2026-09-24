@@ -9,5 +9,5 @@
     "test": "node --test test/*.test.js",
     "test:integration": "node --test test/integration.test.js"
   },
-  "dependencies": { "jiuli": "link:../.." }
+  "dependencies": { "jiuli": "link:../..", "node-schedule": "^2.1.1" }
 }
