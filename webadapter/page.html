@@ -36,6 +36,22 @@
         <span class="flow-arrow" aria-hidden="true">→</span>
         <div><span class="flow-mark filled">库</span><span id="destination">阿里云 OSS<small>加密保存，可按快照恢复</small></span></div>
       </div>
+      <section class="task-monitor" id="taskMonitor" aria-labelledby="taskTitle">
+        <div class="task-header"><div><h2 id="taskTitle">当前任务</h2><p id="taskName" role="status" aria-live="polite">正在读取任务状态…</p></div><button type="button" id="refreshTask" class="button secondary">刷新状态</button></div>
+        <div id="taskDetails" hidden>
+          <div class="task-progress-label"><span id="taskPhase"></span><strong id="taskPercent"></strong></div>
+          <progress id="taskProgress" max="1" aria-label="当前任务进度"></progress>
+          <dl class="task-metrics">
+            <div><dt>已处理文件 / 总数</dt><dd id="taskFiles">—</dd></div>
+            <div><dt>已处理数据 / 总量</dt><dd id="taskBytes">—</dd></div>
+            <div><dt>已用时间</dt><dd id="taskElapsed">—</dd></div>
+            <div><dt>预计剩余</dt><dd id="taskRemaining">—</dd></div>
+          </dl>
+        </div>
+        <p id="taskUpdated" class="task-note">包含当前机器人进程中由聊天命令、定时备份和网页启动的插件任务。</p>
+        <p id="taskStatusError" class="task-error" role="status" hidden></p>
+        <div id="lastTask" class="last-task" hidden><span class="small-label">最近任务</span><p id="lastTaskSummary"></p><p id="lastTaskDetail" hidden></p></div>
+      </section>
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 
       <form id="configForm" autocomplete="off">

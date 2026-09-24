@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { runRestic } from '../lib/runner.js'
 
 const config = { resticPath: 'restic', frameworkDir: process.cwd(), timeoutMinutes: 1 }
@@ -63,4 +64,32 @@ test('missing executable is actionable and releases process handle', async () =>
   const job = {}
   await assert.rejects(runRestic({ ...config, resticPath: 'nonexistent-restic-jiuli-abc123' }, conn, ['init'], job), /找不到 restic/)
   assert.equal(job.child, null)
+})
+
+test('restore JSON updates progress before completion and summary reports completed files and bytes', async () => {
+  const job = {}
+  const promise = runRestic(config, conn, ['restore', 'snapshot', '--json'], job, {
+    json: true,
+    spawnProcess: processFor(`
+      process.stdout.write(JSON.stringify({message_type:'status',files_restored:3,total_files:10,bytes_restored:30,total_bytes:100,seconds_remaining:7})+'\\n');
+      setTimeout(()=>process.stdout.write(JSON.stringify({message_type:'summary',files_restored:10,total_files:10,bytes_restored:100,total_bytes:100})+'\\n'),150);
+    `),
+  })
+  await once(job.child.stdout, 'data')
+  assert.equal(job.phase, '恢复并校验文件')
+  assert.equal(job.progress.percent, 0.3)
+  assert.equal(job.progress.filesDone, 3)
+  assert.equal(job.progress.secondsRemaining, 7)
+  await promise
+  assert.equal(job.progress.percent, 1)
+  assert.equal(job.progress.bytesDone, 100)
+})
+
+test('new command resets previous progress and a check without a percentage remains indeterminate', async () => {
+  const job = { progress: { percent: 0.9, bytesDone: 1000 } }
+  await runRestic(config, conn, ['check', '--json'], job, {
+    json: true, spawnProcess: processFor("process.stdout.write(JSON.stringify({message_type:'summary',num_errors:0})+'\\n')"),
+  })
+  assert.equal(job.phase, '检查仓库')
+  assert.equal(job.progress, null)
 })

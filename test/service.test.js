@@ -113,3 +113,62 @@ test('cancel requests process termination without clearing the lock early', asyn
   assert.equal(service.state.active, null)
   assert.equal(service.state.last.status, 'cancelled')
 })
+
+test('web status sees an existing shared task without loading config, taking the lock or exposing process objects', async t => {
+  let release
+  let entered
+  const started = new Promise(resolve => { entered = resolve })
+  let runs = 0
+  const { service, options } = await fixture(t, async (_config, _conn, _args, job) => {
+    runs++
+    job.phase = '读取并备份文件'
+    job.progress = { percent: 0.4, filesDone: 4, totalFiles: 10, bytesDone: 400, totalBytes: 1000, secondsRemaining: 12, private: 'test-password' }
+    job.child = { circular: job, secret: 'test-password' }
+    entered()
+    await new Promise(resolve => { release = resolve })
+    return { code: 3, summary: { snapshot_id: id }, stderr: 'some files unreadable' }
+  })
+  const pending = service.backup()
+  await started
+  const reloaded = new BackupService({ ...options, configLoader: () => assert.fail('status must not load changed or invalid config') })
+  const status = await reloaded.taskStatus()
+  assert.equal(status.active.id, service.state.active.id)
+  assert.equal(status.active.name, '备份')
+  assert.equal(status.active.phase, '读取并备份文件')
+  assert.equal(status.active.progress.percent, 0.4)
+  assert.equal(status.active.progress.secondsRemaining, 12)
+  assert.ok(status.active.elapsedSeconds >= 0)
+  assert.ok(!JSON.stringify(status).includes('test-password'))
+  assert.equal(status.config, undefined)
+  assert.equal(status.active.child, undefined)
+  assert.equal(runs, 1)
+  service.cancel()
+  assert.equal((await reloaded.taskStatus()).active.cancelled, true)
+  release()
+  await pending
+  const completed = await reloaded.taskStatus()
+  assert.equal(completed.active, null)
+  assert.equal(completed.last.status, 'partial')
+  assert.equal(completed.last.snapshotId, id)
+})
+
+test('web status reads safe last-result metadata without requiring repository credentials', async t => {
+  const { service, config } = await fixture(t, () => assert.fail('no child process should be created'))
+  await fs.mkdir(config.runtimeDir, { recursive: true })
+  await fs.writeFile(path.join(config.runtimeDir, 'last-result.json'), JSON.stringify({
+    name: '备份', status: 'error', startedAt: '2026-09-24T00:00:00Z', finishedAt: '2026-09-24T00:01:00Z',
+    error: '凭据无效', config: { password: 'private-secret' }, target: '/private/path',
+  }))
+  service.configLoader = () => assert.fail('status does not depend on configured credentials')
+  const result = await service.taskStatus()
+  assert.equal(result.active, null)
+  assert.equal(result.last.error, '凭据无效')
+  assert.ok(!JSON.stringify(result).includes('private'))
+  service.state.active = { name: '仓库检查', startedAt: 'invalid', progress: { percent: NaN, filesDone: -5, totalFiles: Infinity } }
+  const checking = await service.taskStatus()
+  assert.equal(checking.active.elapsedSeconds, null)
+  assert.equal(checking.active.progress.percent, null)
+  assert.equal(checking.active.progress.filesDone, null)
+  assert.equal(checking.active.progress.totalFiles, null)
+  service.state.active = null
+})

@@ -14,6 +14,7 @@
   let busy = false
   const library = { loaded: false, busy: false, snapshot: null, directory: '/', snapshots: null, files: null, downloads: [] }
   let downloadTimer
+  const monitor = { active: null, polling: false, stopped: false, timer: null }
   const params = new URLSearchParams(location.search)
   const assetIndex = location.pathname.indexOf('/web-page/')
   const rawBase = params.get('__webBase') || (assetIndex >= 0 ? location.pathname.slice(0, assetIndex) : '')
@@ -163,6 +164,74 @@
     const parsed = new Date(value)
     return value && Number.isFinite(parsed.getTime()) ? parsed.toLocaleString('zh-CN', { hour12: false }) : '—'
   }
+  function duration(value) {
+    if (!Number.isFinite(value) || value < 0) return '—'
+    const seconds = Math.floor(value)
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    return [hours ? `${hours} 小时` : '', minutes ? `${minutes} 分` : '', `${seconds % 60} 秒`].filter(Boolean).join(' ')
+  }
+  function renderTaskStatus(data) {
+    monitor.active = data.active
+    const { active, last } = data
+    el('taskMonitor').dataset.state = active ? 'running' : 'idle'
+    el('taskStatusError').hidden = true
+    el('taskName').textContent = active ? `${active.name}${active.cancelled ? ' · 正在取消' : ' · 执行中'}` : '当前空闲，新的任务启动后会自动显示。'
+    el('taskDetails').hidden = !active
+    if (active) {
+      const progress = active.progress
+      const percent = progress?.percent
+      el('taskPhase').textContent = active.cancelled ? '正在等待任务停止…' : active.phase
+      if (Number.isFinite(percent)) {
+        el('taskProgress').value = percent
+        el('taskPercent').textContent = `${(percent * 100).toFixed(1)}%`
+      } else {
+        el('taskProgress').removeAttribute('value')
+        el('taskPercent').textContent = '执行中'
+      }
+      const count = value => Number.isFinite(value) ? value.toLocaleString('zh-CN') : '—'
+      el('taskFiles').textContent = `${count(progress?.filesDone)} / ${count(progress?.totalFiles)}`
+      el('taskBytes').textContent = `${size(progress?.bytesDone)} / ${size(progress?.totalBytes)}`
+      el('taskElapsed').textContent = duration(active.elapsedSeconds)
+      el('taskRemaining').textContent = progress?.secondsRemaining === null || progress?.secondsRemaining === undefined ? '待估算' : `约 ${duration(progress.secondsRemaining)}`
+    }
+    el('taskUpdated').textContent = `${active ? `开始于 ${date(active.startedAt)} · ` : ''}更新于 ${date(data.observedAt)} · ${active ? '每 2 秒刷新' : '每 5 秒刷新'}`
+    el('lastTask').hidden = !last
+    if (last) {
+      const labels = { success: '成功', partial: '不完整', error: '失败', cancelled: '已取消' }
+      el('lastTask').dataset.state = last.status
+      el('lastTaskSummary').textContent = `${last.name} · ${labels[last.status] || last.status} · ${date(last.finishedAt)}`
+      const detail = [last.snapshotId ? `快照：${last.snapshotId}` : '', last.error].filter(Boolean).join('\n')
+      el('lastTaskDetail').textContent = detail
+      el('lastTaskDetail').hidden = !detail
+    }
+  }
+  async function refreshTaskStatus() {
+    if (monitor.polling || monitor.stopped) return
+    monitor.polling = true
+    clearTimeout(monitor.timer)
+    el('refreshTask').disabled = true
+    let failed = false
+    try {
+      const data = await request({}, 'status', 10000)
+      if (!monitor.stopped) renderTaskStatus(data)
+    } catch (error) {
+      failed = true
+      if (!monitor.stopped) {
+        el('taskMonitor').dataset.state = 'stale'
+        el('taskStatusError').hidden = false
+        el('taskStatusError').textContent = `状态刷新失败：${error.message}。保留上次读取结果，稍后自动重试。`
+      }
+    } finally {
+      monitor.polling = false
+      el('refreshTask').disabled = false
+      if (!monitor.stopped) monitor.timer = setTimeout(refreshTaskStatus, document.hidden ? 15000 : failed ? 5000 : monitor.active ? 2000 : 5000)
+    }
+  }
+  el('refreshTask').addEventListener('click', refreshTaskStatus)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshTaskStatus() })
+  window.addEventListener('pagehide', () => { monitor.stopped = true; clearTimeout(monitor.timer) })
+  window.addEventListener('pageshow', () => { if (monitor.stopped) { monitor.stopped = false; refreshTaskStatus() } })
   function libraryNotice(message, error = false) {
     el('browserNotice').textContent = message
     el('browserNotice').classList.toggle('error', error)
@@ -430,4 +499,5 @@
   })
   selectTab('repository')
   reload()
+  refreshTaskStatus()
 })()

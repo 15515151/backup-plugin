@@ -38,6 +38,7 @@ export function init(ctx, {
     try { res.status(status).json({ ok: true, ...await action(req) }) }
     catch (error) { res.status(400).json({ ok: false, error: error.message }) }
   })
+  api('get', 'status', () => browser.service.taskStatus())
   api('get', 'snapshots', req => browser.snapshots(req.query?.offset))
   api('get', 'files', req => browser.files(req.query?.snapshot, req.query?.path ?? '/', req.query?.offset))
   api('get', 'downloads', async () => ({ downloads: await browser.listDownloads() }))

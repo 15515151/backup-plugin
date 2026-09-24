@@ -53,6 +53,23 @@ h1 { margin: 0; font: 600 30px/1.3 var(--display); letter-spacing: -.03em; }
 .flow-arrow { color: var(--muted); }
 .notice { padding: 12px 16px; background: var(--soft); border: 1px solid var(--line); border-radius: 6px; margin-bottom: 18px; overflow-wrap: anywhere; }
 .notice.error { background: var(--error-bg); color: var(--error); border-color: var(--error); }
+.task-monitor { padding: 22px 24px; margin-bottom: 24px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 7px; background: var(--surface); }
+.task-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.task-header h2 { font-size: 14px; }
+.task-header p { margin: 5px 0 0; font-size: 12px; color: var(--muted); }
+.task-header .button { padding: 7px 11px; font-size: 11px; }
+.task-progress-label { display: flex; justify-content: space-between; gap: 12px; margin: 20px 0 8px; color: var(--muted); font-size: 12px; }
+.task-progress-label strong { color: var(--accent); font: 600 18px var(--mono); white-space: nowrap; }
+#taskProgress { display: block; width: 100%; height: 8px; accent-color: var(--accent); }
+.task-metrics { display: grid; grid-template-columns: 1fr 1.5fr 1fr 1fr; gap: 16px; margin: 18px 0 0; }
+.task-metrics dt { color: var(--muted); font-size: 10px; margin-bottom: 6px; }
+.task-metrics dd { margin: 0; font: 12px var(--mono), var(--body); overflow-wrap: anywhere; }
+.task-note { margin: 15px 0 0; color: var(--muted); font-size: 11px; }
+.task-error { margin: 12px 0 0; padding: 10px 12px; border-radius: 5px; color: var(--error); background: var(--error-bg); font-size: 12px; overflow-wrap: anywhere; }
+.task-monitor[data-state="stale"] { border-left-color: var(--error); }
+.last-task { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 15px; }
+.last-task p { margin: 5px 0 0; font-size: 11px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.last-task[data-state="error"] p, .last-task[data-state="partial"] p { color: var(--error); }
 fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .config-page { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 28px; margin-bottom: 24px; }
 .section-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 26px; }
@@ -156,6 +173,8 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
   .save-bar small { max-width: 180px; }
   .save-bar .button { padding: 10px 14px; }
   .diagnostic-action { align-items: stretch; flex-direction: column; gap: 12px; }
+  .task-monitor { padding: 18px; }
+  .task-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .file-time { display: none; }
   .file-table { min-width: 340px; }
   .data-table td, .data-table th { padding: 10px 8px; }

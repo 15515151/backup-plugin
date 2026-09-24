@@ -8,6 +8,7 @@ import { createPanelConfig, mergePanelConfig, SECRET_MASK, CONFIG_FIELDS } from 
 import { subscribeConfig, notifyConfigChanged } from '../lib/config-events.js'
 import { createGuobaSupport } from '../guoba.support.js'
 import { init } from '../webadapter/index.js'
+import { BackupService } from '../lib/service.js'
 
 async function fixture(t) {
   const pluginDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jiuli-panel-'))
@@ -205,4 +206,24 @@ test('diagnostic routes use current input, return only results and handle failur
     assert.deepEqual(res.data, { ok: false, error: 'test unavailable' })
   }
   assert.equal(await fs.readFile(path.join(pluginDir, 'config.json'), 'utf8'), before)
+})
+
+test('web status endpoint observes an already running plugin job and returns no credentials', async t => {
+  const { store, pluginDir } = await fixture(t)
+  const service = new BackupService({ pluginDir })
+  service.state.active = { id: 'task-id', name: '备份', startedAt: new Date().toISOString(), cancelled: false,
+    progress: { percent: 0.25, filesDone: 1, totalFiles: 4 }, secret: 'private-password', child: {} }
+  service.state.active.child.owner = service.state.active
+  t.after(() => { service.state.active = null })
+  const routes = new Map()
+  init({ registerPage() {}, registerApi: (method, route, handler) => routes.set(`${method} ${route}`, handler) }, {
+    store: { ...store, resolve: () => assert.fail('status must be independent of config') },
+  })
+  const res = { headers: {}, set(name, value) { this.headers[name] = value; return this }, status(code) { this.statusCode = code; return this }, json(data) { this.data = data } }
+  await routes.get('get /backup-plugin/status')({}, res)
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.headers['Cache-Control'], 'no-store')
+  assert.equal(res.data.active.progress.percent, 0.25)
+  assert.ok(!JSON.stringify(res.data).includes('private-password'))
+  assert.equal(service.state.active.id, 'task-id')
 })
