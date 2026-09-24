@@ -15,12 +15,85 @@
   const library = { loaded: false, busy: false, snapshot: null, directory: '/', snapshots: null, files: null, downloads: [] }
   let downloadTimer
   const monitor = { active: null, polling: false, stopped: false, timer: null }
+  const standalone = document.documentElement.dataset.mode === 'standalone'
+  let authenticated = !standalone
+  let csrf = ''
+  let taskBusy = false
+  let statusKnown = false
   const params = new URLSearchParams(location.search)
   const assetIndex = location.pathname.indexOf('/web-page/')
-  const rawBase = params.get('__webBase') || (assetIndex >= 0 ? location.pathname.slice(0, assetIndex) : '')
+  const rawBase = standalone ? '' : params.get('__webBase') || (assetIndex >= 0 ? location.pathname.slice(0, assetIndex) : '')
   const base = new URL(rawBase || '/', location.origin)
-  const apiUrl = route => window.Guoba?.apiUrl ? window.Guoba.apiUrl(`/backup-plugin/${route}`)
+  const apiUrl = route => standalone ? `/api/backup-plugin/${route}` : window.Guoba?.apiUrl ? window.Guoba.apiUrl(`/backup-plugin/${route}`)
+    : assetIndex >= 0 ? `${base.pathname.replace(/\/+$/, '')}/web-page/api/backup-plugin/backup-plugin/${route}`
     : `${base.pathname.replace(/\/+$/, '')}/api/backup-plugin/${route}`
+
+  function guobaToken() {
+    let token = window.Guoba?.token?.() || ''
+    if (!token) {
+      try { token = localStorage.getItem('guoba-access-token') || '' } catch { /* storage 可能被禁用 */ }
+      token ||= params.get('token') || ''
+    }
+    return token
+  }
+
+  function showLogin(message = '') {
+    authenticated = false
+    csrf = ''
+    loaded = false
+    statusKnown = false
+    saved = ''
+    form.reset()
+    monitor.stopped = true
+    clearTimeout(monitor.timer)
+    clearTimeout(downloadTimer)
+    document.documentElement.dataset.authenticated = 'false'
+    document.getElementById('loginPanel').hidden = false
+    document.getElementById('loginError').hidden = !message
+    document.getElementById('loginError').textContent = message
+    document.getElementById('loginPassword').value = ''
+    document.getElementById('loginPassword').focus()
+  }
+
+  async function authRequest(route, options = {}) {
+    const response = await fetch(`/api/auth/${route}`, { ...options, cache: 'no-store', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Backup-CSRF': csrf, ...options.headers }, signal: AbortSignal.timeout(20000) })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || !data.ok) throw new Error(data.error || '无法连接备份面板，请稍后重试')
+    return data
+  }
+
+  async function enterPanel() {
+    const session = await authRequest('session')
+    csrf = session.csrf
+    authenticated = true
+    monitor.stopped = false
+    document.documentElement.dataset.authenticated = 'true'
+    document.getElementById('loginPanel').hidden = true
+    document.getElementById('loginPassword').value = ''
+    document.getElementById('logoutBtn').hidden = false
+    document.getElementById('sourceDirectory').hidden = false
+    document.getElementById('sourceDirectory').textContent = `备份源目录：${session.sourceDir}`
+    selectTab('repository')
+    await Promise.all([reload(), refreshTaskStatus()])
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async event => {
+    event.preventDefault()
+    const button = document.getElementById('loginButton')
+    if (button.disabled) return
+    button.disabled = true
+    button.textContent = '正在登录…'
+    try {
+      await authRequest('login', { method: 'POST', body: JSON.stringify({ password: document.getElementById('loginPassword').value }) })
+      await enterPanel()
+    } catch (error) { showLogin(error.message) }
+    finally { button.disabled = false; button.textContent = '登录备份面板' }
+  })
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    try { await authRequest('logout', { method: 'POST', body: '{}' }); showLogin() }
+    catch (error) { showNotice(error.message, true) }
+  })
 
   function clearTests(kind) {
     document.querySelectorAll('[data-test-result]').forEach(result => {
@@ -50,8 +123,8 @@
     form.hidden = browsing
     refreshButton.hidden = browsing
     document.querySelector('.backup-flow').hidden = browsing
-    document.querySelector('h1').textContent = browsing ? '备份文件' : '备份设置'
-    document.querySelector('.eyebrow').textContent = browsing ? 'RESTIC / 文件' : 'RESTIC / 配置'
+    document.querySelector('.header h1').textContent = browsing ? '备份文件' : '备份设置'
+    document.querySelector('.header .eyebrow').textContent = browsing ? 'RESTIC / 文件' : 'RESTIC / 配置'
     document.querySelector('.subtitle').textContent = browsing ? '浏览历史快照，把需要的文件下载到本机。' : '为机器人文件设置存储位置与备份计划。'
     if (browsing) {
       if (loaded && !library.loaded) refreshSnapshots()
@@ -83,6 +156,7 @@
     saveState.textContent = busy ? '正在处理…' : !loaded ? '配置未读取，请点击重新读取' : dirty ? '有未保存的修改' : '配置已同步'
     saveButton.textContent = busy ? '请稍候…' : '保存配置'
     updateLibrary()
+    updateTaskActions()
   }
 
   function fill(data) {
@@ -115,12 +189,17 @@
   }
 
   async function request(options = {}, route = 'config', timeout = 20000) {
-    if (base.origin !== location.origin) throw new Error('面板接口必须与当前页面同源')
+    if (!authenticated) throw new Error('请先登录备份面板')
+    if (base.origin !== location.origin || new URL(apiUrl(route), location.origin).origin !== location.origin) throw new Error('面板接口必须与当前页面同源')
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeout)
     try {
-      const response = await fetch(apiUrl(route), { ...options, signal: controller.signal, cache: 'no-store', credentials: 'same-origin' })
+      const headers = { ...options.headers }
+      if (standalone) headers['X-Backup-CSRF'] = csrf
+      else { const token = guobaToken(); if (token) headers['guoba-access-token'] = token }
+      const response = await fetch(apiUrl(route), { ...options, headers, signal: controller.signal, cache: 'no-store', credentials: 'same-origin' })
       const data = await response.json().catch(() => ({}))
+      if (standalone && response.status === 401) showLogin('登录已过期，请重新输入面板密码')
       if (!response.ok || !data.ok) throw new Error(data.error || data.message || `请求失败（${response.status}），请检查面板登录状态`)
       return data
     } catch (error) {
@@ -172,6 +251,7 @@
     return [hours ? `${hours} 小时` : '', minutes ? `${minutes} 分` : '', `${seconds % 60} 秒`].filter(Boolean).join(' ')
   }
   function renderTaskStatus(data) {
+    statusKnown = true
     monitor.active = data.active
     const { active, last } = data
     el('taskMonitor').dataset.state = active ? 'running' : 'idle'
@@ -201,13 +281,50 @@
       const labels = { success: '成功', partial: '不完整', error: '失败', cancelled: '已取消' }
       el('lastTask').dataset.state = last.status
       el('lastTaskSummary').textContent = `${last.name} · ${labels[last.status] || last.status} · ${date(last.finishedAt)}`
-      const detail = [last.snapshotId ? `快照：${last.snapshotId}` : '', last.error].filter(Boolean).join('\n')
+      const detail = [last.snapshotId ? `快照：${last.snapshotId}` : '', last.target ? `恢复目录：${last.target}` : '', last.error].filter(Boolean).join('\n')
       el('lastTaskDetail').textContent = detail
       el('lastTaskDetail').hidden = !detail
     }
+    updateTaskActions()
   }
+  function updateTaskActions() {
+    const dirty = loaded && JSON.stringify(collect()) !== saved
+    document.querySelectorAll('[data-task]').forEach(button => {
+      button.disabled = !authenticated || !loaded || !statusKnown || dirty || busy || taskBusy || library.busy || Boolean(monitor.active)
+    })
+    el('cancelTask').disabled = !authenticated || !statusKnown || taskBusy || !monitor.active || monitor.active.cancelled
+  }
+  document.querySelectorAll('[data-task]').forEach(button => button.addEventListener('click', async () => {
+    const action = button.dataset.task
+    let selector
+    if (action === 'restore') {
+      selector = window.prompt('输入 latest 或快照 ID，将恢复到服务器上的独立目录：', 'latest')?.trim()
+      if (!selector) return
+    }
+    if (action === 'init' && !window.confirm('使用已保存配置创建加密仓库？已有仓库不会被覆盖。请先保存好仓库密码。')) return
+    if (action === 'restore' && !window.confirm(`恢复 ${selector} 到新的恢复目录，不覆盖源文件。是否继续？`)) return
+    taskBusy = true
+    updateTaskActions()
+    try {
+      await request({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, selector }) }, 'tasks')
+      library.loaded = false
+      showNotice('任务已启动，可在当前任务区域查看进度和结果。')
+      await refreshTaskStatus()
+    } catch (error) { showNotice(error.message, true) }
+    finally { taskBusy = false; updateTaskActions() }
+  }))
+  el('cancelTask').addEventListener('click', async () => {
+    if (!monitor.active) return
+    taskBusy = true
+    updateTaskActions()
+    try {
+      await request({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: monitor.active.id }) }, 'tasks/cancel')
+      await refreshTaskStatus()
+    } catch (error) { showNotice(error.message, true) }
+    finally { taskBusy = false; updateTaskActions() }
+  })
   async function refreshTaskStatus() {
-    if (monitor.polling || monitor.stopped) return
+    if (monitor.polling || monitor.stopped || !authenticated) return
     monitor.polling = true
     clearTimeout(monitor.timer)
     el('refreshTask').disabled = true
@@ -217,6 +334,8 @@
       if (!monitor.stopped) renderTaskStatus(data)
     } catch (error) {
       failed = true
+      statusKnown = false
+      updateTaskActions()
       if (!monitor.stopped) {
         el('taskMonitor').dataset.state = 'stale'
         el('taskStatusError').hidden = false
@@ -231,7 +350,7 @@
   el('refreshTask').addEventListener('click', refreshTaskStatus)
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshTaskStatus() })
   window.addEventListener('pagehide', () => { monitor.stopped = true; clearTimeout(monitor.timer) })
-  window.addEventListener('pageshow', () => { if (monitor.stopped) { monitor.stopped = false; refreshTaskStatus() } })
+  window.addEventListener('pageshow', () => { if (authenticated && monitor.stopped) { monitor.stopped = false; refreshTaskStatus() } })
   function libraryNotice(message, error = false) {
     el('browserNotice').textContent = message
     el('browserNotice').classList.toggle('error', error)
@@ -271,7 +390,7 @@
     library.loaded = true
     el('snapshotScope').textContent = `${data.hostname} · ${data.tag}`
     el('snapshotEmpty').hidden = data.items.length > 0
-    el('snapshotEmpty').textContent = '没有快照。请检查主机名与标签是否匹配，或先通过主人命令初始化并备份。'
+    el('snapshotEmpty').textContent = '没有快照。请检查主机名与标签是否匹配，或先初始化仓库并创建备份。'
     el('snapshotTable').hidden = !data.items.length
     el('snapshotRows').replaceChildren(...data.items.map(item => {
       const row = node('tr')
@@ -344,15 +463,13 @@
       // 先确认任务仍有效，再交给浏览器原生下载；沿用锅巴支持的 query token 鉴权。
       const { download } = await request({}, `downloads/${item.id}`)
       if (download.status !== 'ready') throw new Error('下载尚未准备完成，请刷新任务')
-      let token = window.Guoba?.token?.() || ''
-      if (!token) {
-        try { token = localStorage.getItem('guoba-access-token') || '' } catch { /* 隐私模式可能禁用 storage */ }
-        token ||= params.get('token') || ''
-      }
-      if (!token) throw new Error('登录状态已失效，请重新登录锅巴后下载')
       const url = new URL(apiUrl(`downloads/${item.id}/file`), location.origin)
-      if (url.origin !== location.origin) throw new Error('下载地址必须与锅巴面板同源')
-      url.searchParams.set('token', token)
+      if (url.origin !== location.origin) throw new Error('下载地址必须与面板同源')
+      if (!standalone) {
+        const token = guobaToken()
+        if (!token) throw new Error('登录状态已失效，请重新登录锅巴后下载')
+        url.searchParams.set('token', token)
+      }
       const link = node('a')
       link.href = url.href
       link.download = item.name
@@ -365,7 +482,7 @@
   }
   async function changeDownload(item, cancel) {
     try {
-      await request({ method: cancel ? 'POST' : 'DELETE' }, `downloads/${item.id}${cancel ? '/cancel' : ''}`)
+      await request({ method: cancel ? 'POST' : 'DELETE', ...(cancel ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}) }, `downloads/${item.id}${cancel ? '/cancel' : ''}`)
       await refreshDownloads()
     } catch (error) { libraryNotice(error.message, true) }
   }
@@ -400,6 +517,7 @@
   let pollingDownloads = false
   let queuedDownloadRefresh = false
   async function refreshDownloads() {
+    if (!authenticated) return
     if (pollingDownloads) { queuedDownloadRefresh = true; return }
     pollingDownloads = true
     clearTimeout(downloadTimer)
@@ -410,8 +528,8 @@
     } catch (error) { libraryNotice(`读取下载任务失败：${error.message}`, true) }
     finally {
       pollingDownloads = false
-      if (queuedDownloadRefresh) { queuedDownloadRefresh = false; downloadTimer = setTimeout(refreshDownloads, 0) }
-      else if (library.downloads.some(item => item.status === 'preparing')) downloadTimer = setTimeout(refreshDownloads, document.hidden ? 5000 : 1500)
+      if (authenticated && queuedDownloadRefresh) { queuedDownloadRefresh = false; downloadTimer = setTimeout(refreshDownloads, 0) }
+      else if (authenticated && library.downloads.some(item => item.status === 'preparing')) downloadTimer = setTimeout(refreshDownloads, document.hidden ? 5000 : 1500)
     }
   }
   el('refreshSnapshots').addEventListener('click', () => refreshSnapshots())
@@ -498,6 +616,12 @@
     if (event.origin === location.origin && event.source === window.parent && event.data?.type === 'guoba:theme-changed') applyTheme(event.data.isDark)
   })
   selectTab('repository')
-  reload()
-  refreshTaskStatus()
+  if (standalone) {
+    showLogin()
+    document.getElementById('loginButton').disabled = true
+    enterPanel().catch(() => showLogin()).finally(() => { document.getElementById('loginButton').disabled = false })
+  } else {
+    reload()
+    refreshTaskStatus()
+  }
 })()

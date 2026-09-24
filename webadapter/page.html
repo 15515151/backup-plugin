@@ -8,6 +8,19 @@
   <script src="client.js" defer></script>
 </head>
 <body>
+  <section id="loginPanel" class="login-panel" aria-labelledby="loginTitle" hidden>
+    <div class="login-card">
+      <p class="eyebrow">RESTIC / 备份管理</p>
+      <h1 id="loginTitle">打开你的备份库</h1>
+      <p class="section-help">登录后管理备份计划，浏览快照与恢复文件。</p>
+      <form id="loginForm">
+        <label class="field"><span>面板登录密码</span><input id="loginPassword" type="password" autocomplete="current-password" required maxlength="256" aria-describedby="loginHelp"></label>
+        <p id="loginHelp" class="hint">首次密码显示在启动终端中；也可使用你自行设置的登录密码。</p>
+        <p id="loginError" class="notice error" role="alert" hidden></p>
+        <button id="loginButton" class="button primary" type="submit">登录备份面板</button>
+      </form>
+    </div>
+  </section>
   <div class="app">
     <aside class="sidebar">
       <a class="brand" href="#repository" aria-label="restic 备份设置">
@@ -27,8 +40,9 @@
     <main>
       <header class="header">
         <div><p class="eyebrow">RESTIC / 配置</p><h1>备份设置</h1><p class="subtitle">为机器人文件设置存储位置与备份计划。</p></div>
-        <button type="button" id="refreshBtn" class="button secondary">重新读取</button>
+        <div class="header-actions"><button type="button" id="refreshBtn" class="button secondary">重新读取</button><button type="button" id="logoutBtn" class="button secondary" hidden>退出登录</button></div>
       </header>
+      <p id="sourceDirectory" class="hint" hidden></p>
       <div class="backup-flow" aria-label="备份方式">
         <div><span class="flow-mark">源</span><span>机器人文件<small>自动排除临时目录</small></span></div>
         <span class="flow-arrow" aria-hidden="true">→</span>
@@ -38,6 +52,13 @@
       </div>
       <section class="task-monitor" id="taskMonitor" aria-labelledby="taskTitle">
         <div class="task-header"><div><h2 id="taskTitle">当前任务</h2><p id="taskName" role="status" aria-live="polite">正在读取任务状态…</p></div><button type="button" id="refreshTask" class="button secondary">刷新状态</button></div>
+        <div class="task-actions" aria-label="备份操作">
+          <button type="button" class="button primary" data-task="backup" disabled>立即备份</button>
+          <button type="button" class="button secondary" data-task="init" disabled>初始化仓库</button>
+          <button type="button" class="button secondary" data-task="check" disabled>检查仓库</button>
+          <button type="button" class="button secondary" data-task="restore" disabled>恢复快照</button>
+          <button type="button" class="button secondary" id="cancelTask" disabled>取消当前任务</button>
+        </div>
         <div id="taskDetails" hidden>
           <div class="task-progress-label"><span id="taskPhase"></span><strong id="taskPercent"></strong></div>
           <progress id="taskProgress" max="1" aria-label="当前任务进度"></progress>
@@ -116,7 +137,7 @@
             </div>
           </section>
         </fieldset>
-        <footer class="save-bar"><div><strong id="saveState" role="status">正在读取配置…</strong><small>主人命令：#初始化备份 · #备份 · #备份状态</small></div><button id="saveBtn" class="button primary" type="submit" disabled>保存配置</button></footer>
+        <footer class="save-bar"><div><strong id="saveState" role="status">正在读取配置…</strong><small>先保存配置，再初始化仓库或创建备份。</small></div><button id="saveBtn" class="button primary" type="submit" disabled>保存配置</button></footer>
       </form>
       <section class="config-page library-page" id="page-backups" aria-labelledby="libraryTitle" hidden>
         <div class="section-title"><div><h2 id="libraryTitle">备份文件</h2><p>选择快照，浏览并取出需要的文件。</p></div><button type="button" id="refreshSnapshots" class="button secondary" data-library-action>刷新列表</button></div>

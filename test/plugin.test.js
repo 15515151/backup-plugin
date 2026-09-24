@@ -1,5 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import os from 'node:os'
+import { pathToFileURL } from 'node:url'
+import { PLUGIN_DIR } from '../lib/config.js'
 import { createBackupPlugin } from '../lib/plugin.js'
 
 class BasePlugin { constructor(options) { Object.assign(this, options) } }
@@ -118,4 +123,38 @@ test('a delayed schedule creation cannot survive plugin unload', async () => {
   await loading
   assert.equal(cancelled, true)
   assert.equal(plugin.scheduledJob, null)
+})
+
+test('unload during configuration creation cannot later register a schedule', async () => {
+  let finish
+  const Plugin = createBackupPlugin(BasePlugin, {
+    ensure: () => new Promise(resolve => { finish = resolve }),
+    subscribe: () => assert.fail('unloaded plugin must not subscribe'),
+  })
+  const plugin = new Plugin()
+  const pending = plugin.onLoad()
+  plugin.onUnload()
+  finish()
+  await pending
+  assert.equal(plugin.scheduledJob, null)
+})
+
+test('plugin entry resolves its JiuLi host without a mandatory node_modules framework link', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-host-'))
+  t.after(async () => {
+    assert.ok(path.resolve(directory).startsWith(path.resolve(os.tmpdir()) + path.sep))
+    await fs.rm(directory, { recursive: true, force: true })
+  })
+  const plugin = path.join(directory, 'plugins/backup-plugin')
+  await fs.mkdir(path.join(directory, 'lib'), { recursive: true })
+  await fs.mkdir(path.join(plugin, 'lib'), { recursive: true })
+  await fs.writeFile(path.join(directory, 'package.json'), JSON.stringify({ name: 'jiuli', type: 'module', exports: './lib/index.js' }))
+  await fs.writeFile(path.join(directory, 'lib/index.js'), 'export class JiuLiPlugin { constructor(options) { Object.assign(this, options) } }')
+  await fs.copyFile(path.join(PLUGIN_DIR, 'package.json'), path.join(plugin, 'package.json'))
+  await fs.copyFile(path.join(PLUGIN_DIR, 'index.js'), path.join(plugin, 'index.js'))
+  await fs.cp(path.join(PLUGIN_DIR, 'lib'), path.join(plugin, 'lib'), { recursive: true })
+  const { default: Plugin } = await import(pathToFileURL(path.join(plugin, 'index.js')))
+  const instance = new Plugin()
+  assert.equal(instance.name, 'restic备份')
+  assert.equal(instance.rule[0].permission, 'master')
 })

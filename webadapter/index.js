@@ -3,7 +3,7 @@ import { createDiagnostics } from '../lib/diagnostics.js'
 import { BackupService } from '../lib/service.js'
 import { BackupBrowser } from '../lib/browser.js'
 
-// 由锅巴扩展页面宿主提供鉴权、静态资源与 API 路由，不单独监听端口。
+// 只注册业务路由；Guoba 和独立服务分别在挂载前完成各自的鉴权。
 export function init(ctx, {
   store = createPanelConfig(), diagnostics = createDiagnostics(),
   browser = new BackupBrowser({ service: new BackupService({ pluginDir: store.pluginDir, configLoader: () => store.resolve({}) }) }),
@@ -36,9 +36,25 @@ export function init(ctx, {
   const api = (method, route, action, status = 200) => ctx.registerApi(method, `/backup-plugin/${route}`, async (req, res) => {
     res.set?.('Cache-Control', 'no-store')
     try { res.status(status).json({ ok: true, ...await action(req) }) }
-    catch (error) { res.status(400).json({ ok: false, error: error.message }) }
+    catch (error) { res.status(error.status || 400).json({ ok: false, error: error.message }) }
   })
   api('get', 'status', () => browser.service.taskStatus())
+  api('post', 'tasks', req => {
+    const { action, selector = 'latest' } = req.body || {}
+    if (!['init', 'backup', 'check', 'restore'].includes(action)) throw new Error('不支持的备份操作')
+    if (action === 'restore' && (typeof selector !== 'string' || (selector !== 'latest' && !/^[a-f0-9]{8,64}$/i.test(selector)))) throw new Error('请输入 latest 或至少 8 位快照 ID')
+    const service = browser.service
+    if (service.state.active) throw Object.assign(new Error('已有任务正在执行，请等待完成或取消'), { status: 409 })
+    // execute 同步取得任务锁，结果和已脱敏的错误由 status 查询。
+    const pending = service[action](selector)
+    pending.catch(() => {})
+    return { taskId: service.state.active?.id }
+  }, 202)
+  api('post', 'tasks/cancel', req => {
+    const service = browser.service
+    if (!req.body?.taskId || service.state.active?.id !== req.body.taskId) throw Object.assign(new Error('任务已结束或已更换，请刷新状态'), { status: 409 })
+    return { cancelled: service.cancel() }
+  })
   api('get', 'snapshots', req => browser.snapshots(req.query?.offset))
   api('get', 'files', req => browser.files(req.query?.snapshot, req.query?.path ?? '/', req.query?.offset))
   api('get', 'downloads', async () => ({ downloads: await browser.listDownloads() }))

@@ -31,6 +31,7 @@ test('webpage navigates snapshots, preserves literal filenames, prepares and dow
   window.fetch = async (url, options = {}) => {
     const request = new URL(url, window.location.href)
     const route = request.pathname.slice(request.pathname.lastIndexOf('/backup-plugin/') + '/backup-plugin/'.length)
+    assert.equal(options.headers['guoba-access-token'], 'fixture-token')
     events.push({ route, method: options.method || 'GET', body: options.body && JSON.parse(options.body) })
     let result
     if (route === 'config') result = { config, defaultExcludes: ['node_modules'] }
@@ -53,7 +54,7 @@ test('webpage navigates snapshots, preserves literal filenames, prepares and dow
   await until(() => !document.getElementById('configFields').disabled)
   document.querySelector('[data-tab="backups"]').click()
   await until(() => document.querySelector('#snapshotRows button') && !document.querySelector('#snapshotRows button').disabled)
-  assert.equal(document.querySelector('h1').textContent, '备份文件')
+  assert.equal(document.querySelector('.header h1').textContent, '备份文件')
   assert.equal(document.getElementById('configForm').hidden, true)
   document.querySelector('#snapshotRows button').click()
   await until(() => document.querySelector('#fileRows .file-name') && !document.querySelector('#fileRows .file-name').disabled)
@@ -154,4 +155,108 @@ test('webpage polls existing task progress across tabs, shows indeterminate phas
   assert.ok(requests.every(item => !item.options.method || item.options.method === 'GET'))
   window.dispatchEvent(new window.Event('pagehide'))
   assert.equal(scheduled.size, 0)
+})
+
+test('standalone page requires login, sends CSRF, uses cookie downloads, starts tasks and stops polling after expiry', { skip: !enabled }, async t => {
+  const { JSDOM } = createRequire(import.meta.url)(process.env.TEST_JSDOM_PATH)
+  const html = (await fs.readFile(`${PLUGIN_DIR}/webadapter/page.html`, 'utf8')).replace('<html lang="zh-CN">', '<html lang="zh-CN" data-mode="standalone">')
+  const script = await fs.readFile(`${PLUGIN_DIR}/webadapter/client.js`, 'utf8')
+  const config = JSON.parse(await fs.readFile(`${PLUGIN_DIR}/config.example.json`, 'utf8'))
+  const dom = new JSDOM(html, { url: 'http://127.0.0.1:5212/?token=must-not-be-used&__webBase=https://evil.example', runScripts: 'outside-only' })
+  t.after(() => dom.window.close())
+  const { window } = dom
+  const { document } = window
+  window.AbortSignal.timeout = () => new window.AbortController().signal
+  window.HTMLElement.prototype.scrollIntoView = () => {}
+  let downloaded
+  window.HTMLAnchorElement.prototype.click = function () { downloaded = this.href }
+  window.localStorage.setItem('guoba-access-token', 'must-not-be-used')
+  window.Guoba = { apiUrl: () => assert.fail('standalone must not use Guoba URLs'), token: () => assert.fail('standalone must not use Guoba tokens') }
+  let loggedIn = false
+  let active = null
+  let downloadStatus = 'ready'
+  const events = []
+  window.fetch = async (url, options = {}) => {
+    assert.ok(url.startsWith('/api/'))
+    assert.equal(options.credentials, 'same-origin')
+    assert.equal(options.headers?.['guoba-access-token'], undefined)
+    events.push({ url, options })
+    let data
+    let status = 200
+    if (url === '/api/auth/login') {
+      assert.equal(JSON.parse(options.body).password, 'test-login-password')
+      loggedIn = true
+      data = { csrf: 'fixture-csrf' }
+    } else if (!loggedIn) { status = 401; data = { error: '请登录' } }
+    else if (url === '/api/auth/session') data = { csrf: 'fixture-csrf', sourceDir: '/srv/backup-source' }
+    else if (url === '/api/auth/logout') { loggedIn = false; data = {} }
+    else {
+      assert.equal(options.headers['X-Backup-CSRF'], 'fixture-csrf')
+      const route = url.slice('/api/backup-plugin/'.length).split('?')[0]
+      if (route === 'config') data = { config, defaultExcludes: ['node_modules'] }
+      else if (route === 'status') data = { active, last: null, observedAt: new Date().toISOString() }
+      else if (route === 'tasks') {
+        assert.equal(JSON.parse(options.body).action, 'backup')
+        active = { id: 'web-task', name: '备份', phase: '执行中', startedAt: new Date().toISOString(), progress: null }
+        data = { taskId: active.id }
+      } else if (route === 'tasks/cancel') {
+        assert.equal(JSON.parse(options.body).taskId, active.id)
+        active = null
+        data = { cancelled: true }
+      } else if (route === 'snapshots') data = { items: [], offset: 0, total: 0, nextOffset: null }
+      else if (route === 'downloads') data = { downloads: [{ id: taskId, snapshotId: id, path: '/fixture.bin', status: downloadStatus, name: 'fixture.bin', bytes: 4, expiresAt: Date.now() + 10000 }] }
+      else if (route === `downloads/${taskId}`) data = { download: { status: 'ready' } }
+      else if (route === `downloads/${taskId}/cancel`) {
+        assert.equal(options.method, 'POST')
+        assert.equal(options.headers['Content-Type'], 'application/json')
+        downloadStatus = 'cancelled'
+        data = { download: { status: downloadStatus } }
+      }
+      else assert.fail(`Unexpected route: ${route}`)
+    }
+    return { ok: status === 200, status, json: async () => ({ ok: status === 200, ...data }) }
+  }
+  window.eval(script)
+  const el = id => document.getElementById(id)
+  await until(() => !el('loginPanel').hidden && !el('loginButton').disabled)
+  assert.equal(events.length, 1, 'business polling must not start before login')
+  assert.equal(el('loginTitle').textContent, '打开你的备份库')
+  const submitLogin = async () => {
+    el('loginPassword').value = 'test-login-password'
+    el('loginForm').dispatchEvent(new window.Event('submit', { cancelable: true, bubbles: true }))
+    await until(() => !document.querySelector('[data-task="backup"]').disabled)
+  }
+  await submitLogin()
+  assert.equal(el('loginPanel').hidden, true)
+  assert.equal(el('loginPassword').value, '')
+  assert.match(el('sourceDirectory').textContent, /backup-source/)
+  document.querySelector('[data-task="backup"]').click()
+  await until(() => el('taskName').textContent.includes('备份') && !el('cancelTask').disabled)
+  el('cancelTask').click()
+  await until(() => !document.querySelector('[data-task="backup"]').disabled)
+  document.querySelector('[data-tab="backups"]').click()
+  await until(() => el('downloadTasks').textContent.includes('下载到本机'))
+  document.querySelector('#downloadTasks button').click()
+  await until(() => downloaded)
+  assert.equal(new URL(downloaded).search, '')
+  assert.ok(!events.some(event => event.url.endsWith('/file')))
+  downloadStatus = 'preparing'
+  el('refreshDownloads').click()
+  await until(() => el('downloadTasks').textContent.includes('正在准备'))
+  document.querySelector('#downloadTasks button').click()
+  await until(() => el('downloadTasks').textContent.includes('已取消准备'))
+  loggedIn = false
+  el('refreshTask').click()
+  await until(() => !el('loginPanel').hidden)
+  assert.match(el('loginError').textContent, /登录已过期/)
+  const count = events.length
+  window.dispatchEvent(new window.Event('pageshow'))
+  document.dispatchEvent(new window.Event('visibilitychange'))
+  await tick()
+  assert.equal(events.length, count)
+  await submitLogin()
+  el('logoutBtn').click()
+  await until(() => !el('loginPanel').hidden)
+  assert.equal(loggedIn, false)
+  assert.equal(document.documentElement.dataset.authenticated, 'false')
 })

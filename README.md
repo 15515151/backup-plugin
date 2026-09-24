@@ -21,11 +21,62 @@ data/memes
 
 按 restic 路径组件规则匹配：`node_modules`、`logs`、`temp` 在任意层级排除，`data/upload_tmp` 和 `data/memes` 匹配连续的目录组件。插件自己的 `.runtime` 目录也排除，其中存放 restic 缓存、恢复文件、工具与任务状态。额外排除项填入 `extraExcludes`；默认项始终生效，不支持使用 `!` 反选。
 
-备份源固定为插件所在的 JiuLi 根目录，例如此安装为 `D:\jiuli`，与启动命令所在目录无关。配置中的相对文件路径以插件目录为基准。
+机器人模式的备份源固定为插件所在的 JiuLi 根目录，例如此安装为 `D:\jiuli`，与启动命令所在目录无关。独立网页模式可用 `BACKUP_SOURCE_DIR` 指定任意备份源。配置中的相对文件路径以插件目录为基准。
+
+## 独立网页模式（无需 Yunzai / JiuLi / Guoba）
+
+在本项目目录运行，安装 Node.js ≥ 20 和 restic 即可：
+
+```powershell
+pnpm install
+pnpm start
+```
+
+打开 <http://127.0.0.1:5212>。首次启动会在终端显示随机生成的**面板登录密码**，请保存后用它登录。它与 restic 仓库密码相互独立。后续启动沿用该密码；浏览器登录有效期为 8 小时，退出登录或服务重启后会话失效。
+
+网页共用现有 `webadapter/` 页面与 `config.json`，支持配置仓库、连接测试、定时备份、实时进度、文件浏览、下载，以及以下操作：
+
+- **初始化仓库**：使用已保存的配置创建仓库，已有仓库不会覆盖。
+- **立即备份 / 检查仓库**：后台执行，页面持续显示进度；关闭页面不停止任务。
+- **恢复快照**：输入 `latest` 或快照 ID，恢复并校验到新的 `.runtime/restores/` 目录，完成后显示路径。
+- **取消当前任务**：请求 restic 停止；退出登录不会取消任务，关闭服务会取消当前任务和定时计划。
+
+先保存配置，再执行操作。备份源显示在页面顶部：项目位于 `plugins/backup-plugin` 时默认使用机器人根目录；单独克隆到其他位置时默认使用项目目录。可以通过环境变量指定：
+
+```powershell
+$env:BACKUP_SOURCE_DIR = 'D:/my-data'
+$env:BACKUP_WEB_PORT = '5212'
+# 可选：自行设置或重置登录密码，12～256 位；不填则首次自动生成。
+$env:BACKUP_WEB_PASSWORD = 'replace-with-your-own-strong-password'
+pnpm start
+```
+
+Linux 示例：
+
+```bash
+pnpm install
+BACKUP_SOURCE_DIR=/srv/my-data pnpm start
+```
+
+| 环境变量 | 默认值 / 用途 |
+|---|---|
+| `BACKUP_SOURCE_DIR` | 如上所述；必须是已存在的目录，启动时确定 |
+| `BACKUP_WEB_HOST` | `127.0.0.1`，监听地址；允许局域网访问时可设 `0.0.0.0` |
+| `BACKUP_WEB_PORT` | `5212` |
+| `BACKUP_WEB_ORIGIN` | 对外访问的完整站点地址，例如 `https://backup.example.com` 或 `http://192.168.1.10:5212`，不含路径 |
+| `BACKUP_WEB_PASSWORD` | 可选；设置后每次启动重设登录密码，移除此环境变量后仍保留最后设置的密码 |
+
+远程访问时同时设置 `BACKUP_WEB_ORIGIN`。HTTPS 反向代理应保留原始 `Host`（Nginx 示例：`proxy_set_header Host $http_host;`），并在独立服务设置相同的 HTTPS Origin；服务据此使用 Secure Cookie，不信任客户端提交的 `X-Forwarded-*` 头。当前独立页面部署在站点根路径，不支持子路径挂载。公网访问使用 HTTPS，避免明文传送密码与备份文件。
+
+密码以随机盐 + scrypt 摘要保存在 `.runtime/web-auth.json`，不会通过配置 API 回显；丢失密码可设置 `BACKUP_WEB_PASSWORD` 后重启。服务使用 HttpOnly / SameSite Cookie、写请求 CSRF 校验与登录限流；附件下载也必须携带有效 Cookie，不接受 Guoba token 或 URL 中的 token。
+
+Guoba 模式仍通过 `ctx.registerApi` 交给宿主鉴权，继续支持 `guoba-access-token` 请求头和附件 query token，不会出现独立登录页或自动监听额外端口。`jiuli` 现在是可选 peer，独立安装不会拉取机器人框架；机器人入口仍支持从 JiuLi 宿主解析框架。
+
+独立服务启动时加载定时计划，在网页保存后立即更新；手动改 `config.json` 后需重启独立服务。网页与同进程的定时任务共用任务锁和实时状态。独立网页与机器人、CLI 是不同进程，不共享实时状态；同一份配置建议只由一个常驻进程执行定时备份，避免重复触发。
 
 ## 开始使用
 
-1. 插件放在 `JiuLi/plugins/backup-plugin/`。在 JiuLi 根目录运行 `pnpm install`，建立插件声明的 `jiuli` 框架链接。全新框架还需要按框架说明执行 `pnpm build`。
+1. 插件放在 `JiuLi/plugins/backup-plugin/`。在 JiuLi 根目录运行 `pnpm install`，安装插件依赖。全新框架还需要按框架说明执行 `pnpm build`。
 2. 从 [restic Releases](https://github.com/restic/restic/releases) 安装适合系统的 restic，建议使用 **0.19.1 或更新版本**，网页下载需要支持 `dump --target`。本次已在 Windows 上下载并通过官方 SHA256 校验 **0.19.1**，位于 `.runtime/tools/restic_0.19.1_windows_amd64.exe`，生成的 `config.json` 已指向它。此文件不进 Git；重新克隆或迁移到 Linux 时需要重新安装。
 3. 编辑 `config.json`。首次加载插件会从 `config.example.json` 创建该文件；也可以手动复制。填写仓库密码、OSS Bucket、AccessKey 和地域。
 4. 启动机器人或发送 `#重载 backup-plugin`。主人发送 `#初始化备份`，成功后发送 `#备份`。
@@ -109,7 +160,7 @@ restic 退出码 `3` 表示部分文件无法读取：插件将其标记为**不
 - **插件配置**：`guoba.support.js` 注册「restic 备份」，支持 restic 路径、OSS / 本地仓库、密码、定时、快照标签、限速和额外排除项。
 - **扩展页面**：`webadapter/` 注册「restic 备份」独立页面，分为「存储仓库」「阿里云 OSS」「备份策略」「备份文件」，支持手机布局并跟随锅巴深浅主题。
 
-更新后先在机器人根目录执行 `pnpm install`，再重载备份插件。进入锅巴的插件配置列表刷新；扩展页面没有出现时，在「扩展页面」中点击「重新扫描」。独立页面需要支持 `webadapter` 的锅巴版本（参考插件所使用的版本）；较旧的锅巴仍可使用标准插件配置表单。网页支持配置、浏览和下载；创建备份、初始化仓库和恢复到服务器目录仍使用主人命令或 CLI。
+更新后先在机器人根目录执行 `pnpm install`，再重载备份插件。进入锅巴的插件配置列表刷新；扩展页面没有出现时，在「扩展页面」中点击「重新扫描」。扩展页面需要支持 `webadapter` 的锅巴版本；较旧的锅巴仍可使用标准插件配置表单。网页支持配置、初始化、备份、恢复、检查、取消、浏览和下载，主人命令与 CLI 也继续可用。
 
 保存前会检查字段类型、cron、OSS 地址、仓库目录和排除规则；无效输入不会覆盖原配置。保存配置不会连接或初始化 OSS 仓库。保存成功后，已加载插件会自动更新定时任务，正在运行的备份继续使用启动时的配置。若锅巴与机器人运行在不同进程，保存提示会要求启动或重载备份插件。
 
@@ -122,7 +173,7 @@ restic 退出码 `3` 表示部分文件无法读取：插件将其标记为**不
 
 密码、AccessKey 和 Token 回显为 `********` 占位符。保持占位符不变会保留原值，输入新值会替换，清空后保存会删除配置中的该项。环境变量仍然优先，面板不会读取或显示环境变量中的凭据。`resticPath` 等相对路径和留空的主机名会保持原样，不会被面板转换成本机绝对路径。默认五类排除项始终保留，只能增加额外排除项。
 
-扩展页面通过锅巴的 `ctx.registerPage` / `ctx.registerApi` 接入，复用宿主的登录鉴权，不额外开放 HTTP 端口。
+Guoba 中的扩展页面通过 `ctx.registerPage` / `ctx.registerApi` 接入，复用宿主的登录鉴权，不额外开放 HTTP 端口。单独运行 `pnpm start` 则启用上文的独立服务和密码登录。
 
 ### 查看正在执行的任务
 
@@ -143,7 +194,7 @@ restic 退出码 `3` 表示部分文件无法读取：插件将其标记为**不
 
 每个插件最多保留 3 个下载任务。准备结束 30 分钟后自动清理缓存，也可手动点击“清理”；正在传输的附件会在传输结束后清理。插件热重载保留任务；进程重启后需要重新准备下载，下一次访问下载列表会清理已退出进程留下的缓存。缓存目录已排除在备份之外，导出不会覆盖机器人文件。
 
-附件使用锅巴现有登录鉴权，以浏览器原生下载方式流式传输，支持 HTTP Range，不将整份备份加载到网页内存。下载使用当前登录令牌，退出登录或令牌过期后需要重新登录。列举和浏览每个 restic 子命令最多运行 1 分钟；导出遵循配置中的 `timeoutMinutes` 和下载限速。
+附件使用所在模式的登录鉴权，以浏览器原生下载方式流式传输，支持 HTTP Range，不将整份备份加载到网页内存。Guoba 使用当前登录令牌，独立模式使用 Cookie 会话；退出登录或登录过期后需要重新登录。列举和浏览每个 restic 子命令最多运行 1 分钟；导出遵循配置中的 `timeoutMinutes` 和下载限速。
 
 ## 定时备份和可选项
 
@@ -198,3 +249,5 @@ node --test test/*.test.js
 第一种运行配置、消息权限、任务互斥、子进程取消/超时等测试；设置 `TEST_RESTIC_PATH` 后还执行真实仓库测试：排除目录、重复备份不新增内容块、大文件局部修改去重、完整快照、历史文件恢复，以及 `check --read-data`。测试数据只写入隔离临时目录并在结束时清理，不访问配置中的实际 OSS 仓库。
 
 真实仓库测试还覆盖网页文件浏览、二进制文件导出、中文和特殊字符目录 ZIP、空目录及整份快照 ZIP 的解压内容。若需要运行网页 DOM 交互测试，可在隔离工具目录安装 `jsdom`，将 `TEST_JSDOM_PATH` 设置为该 `jsdom` 包的绝对路径后运行测试；插件运行本身不依赖 jsdom。
+
+独立网页测试覆盖未登录接口拦截、密码摘要持久化、登录限流、会话过期与注销、CSRF / Origin / Host 校验、任务互斥与取消、定时更新。设置 `TEST_RESTIC_PATH` 后还执行通过 HTTP 登录、初始化、备份、浏览、Range 下载、恢复及检查的完整流程。可选设置 `TEST_GUOBA_PATH` 为本机 Guoba 插件目录，验证实际的扩展页面注册、引导脚本注入与 API 路由兼容。
