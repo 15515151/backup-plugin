@@ -12,6 +12,8 @@
   let saved = ''
   let loaded = false
   let busy = false
+  const library = { loaded: false, busy: false, snapshot: null, directory: '/', snapshots: null, files: null, downloads: [] }
+  let downloadTimer
   const params = new URLSearchParams(location.search)
   const assetIndex = location.pathname.indexOf('/web-page/')
   const rawBase = params.get('__webBase') || (assetIndex >= 0 ? location.pathname.slice(0, assetIndex) : '')
@@ -35,7 +37,7 @@
   }
 
   function selectTab(tab) {
-    const selected = ['repository', 'oss', 'schedule'].includes(tab) ? tab : 'repository'
+    const selected = ['repository', 'oss', 'schedule', 'backups'].includes(tab) ? tab : 'repository'
     document.querySelectorAll('[data-tab]').forEach(button => {
       const active = button.dataset.tab === selected
       button.classList.toggle('active', active)
@@ -43,6 +45,17 @@
       else button.removeAttribute('aria-current')
     })
     document.querySelectorAll('.config-page').forEach(page => { page.hidden = page.id !== `page-${selected}` })
+    const browsing = selected === 'backups'
+    form.hidden = browsing
+    refreshButton.hidden = browsing
+    document.querySelector('.backup-flow').hidden = browsing
+    document.querySelector('h1').textContent = browsing ? '备份文件' : '备份设置'
+    document.querySelector('.eyebrow').textContent = browsing ? 'RESTIC / 文件' : 'RESTIC / 配置'
+    document.querySelector('.subtitle').textContent = browsing ? '浏览历史快照，把需要的文件下载到本机。' : '为机器人文件设置存储位置与备份计划。'
+    if (browsing) {
+      if (loaded && !library.loaded) refreshSnapshots()
+      refreshDownloads()
+    }
   }
 
   function collect() {
@@ -59,15 +72,16 @@
 
   function update() {
     const dirty = loaded && JSON.stringify(collect()) !== saved
-    saveButton.disabled = busy || !dirty
-    refreshButton.disabled = busy
-    fieldset.disabled = busy || !loaded
+    saveButton.disabled = busy || library.busy || !dirty
+    refreshButton.disabled = busy || library.busy
+    fieldset.disabled = busy || library.busy || !loaded
     form.elements.namedItem('schedule.cron').disabled = !form.elements.namedItem('schedule.enabled').checked
     document.getElementById('localField').hidden = form.elements.namedItem('backend').value !== 'local'
     const destination = document.getElementById('destination')
     destination.firstChild.textContent = form.elements.namedItem('backend').value === 'local' ? '本地仓库' : '阿里云 OSS'
     saveState.textContent = busy ? '正在处理…' : !loaded ? '配置未读取，请点击重新读取' : dirty ? '有未保存的修改' : '配置已同步'
     saveButton.textContent = busy ? '请稍候…' : '保存配置'
+    updateLibrary()
   }
 
   function fill(data) {
@@ -88,19 +102,28 @@
     }))
     loaded = true
     saved = JSON.stringify(collect())
+    library.loaded = false
+    library.snapshot = null
+    library.snapshots = null
+    library.files = null
+    document.getElementById('snapshotTable').hidden = true
+    document.getElementById('snapshotPagination').hidden = true
+    document.getElementById('fileBrowser').hidden = true
+    document.getElementById('snapshotEmpty').hidden = false
+    document.getElementById('snapshotEmpty').textContent = '点击刷新列表，读取已保存配置中的备份。'
   }
 
-  async function request(options = {}, route = 'config') {
+  async function request(options = {}, route = 'config', timeout = 20000) {
     if (base.origin !== location.origin) throw new Error('面板接口必须与当前页面同源')
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 20000)
+    const timer = setTimeout(() => controller.abort(), timeout)
     try {
       const response = await fetch(apiUrl(route), { ...options, signal: controller.signal, cache: 'no-store', credentials: 'same-origin' })
       const data = await response.json().catch(() => ({}))
       if (!response.ok || !data.ok) throw new Error(data.error || data.message || `请求失败（${response.status}），请检查面板登录状态`)
       return data
     } catch (error) {
-      if (error.name === 'AbortError') throw new Error(route.startsWith('test/') ? '测试请求超时，请稍后重试' : '请求超时，请重新读取配置确认是否保存成功')
+      if (error.name === 'AbortError') throw new Error(route === 'config' ? '请求超时，请重新读取配置确认是否保存成功' : '请求超时，请稍后刷新重试')
       throw error
     } finally { clearTimeout(timer) }
   }
@@ -114,6 +137,222 @@
     catch (error) { showNotice(error.message, true) }
     finally { busy = false; update() }
   }
+
+  const el = id => document.getElementById(id)
+  function node(tag, text, className) {
+    const element = document.createElement(tag)
+    if (text !== undefined) element.textContent = text
+    if (className) element.className = className
+    return element
+  }
+  function action(label, callback, className = 'table-button', repository = true) {
+    const button = node('button', label, className)
+    button.type = 'button'
+    if (repository) button.dataset.libraryAction = ''
+    button.addEventListener('click', callback)
+    return button
+  }
+  function size(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return '—'
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+    let index = 0
+    while (bytes >= 1024 && index < units.length - 1) { bytes /= 1024; index++ }
+    return `${index ? bytes.toFixed(1) : bytes} ${units[index]}`
+  }
+  function date(value) {
+    const parsed = new Date(value)
+    return value && Number.isFinite(parsed.getTime()) ? parsed.toLocaleString('zh-CN', { hour12: false }) : '—'
+  }
+  function libraryNotice(message, error = false) {
+    el('browserNotice').textContent = message
+    el('browserNotice').classList.toggle('error', error)
+    el('browserNotice').hidden = !message
+  }
+  function updateLibrary() {
+    const dirty = loaded && JSON.stringify(collect()) !== saved
+    const blocked = !loaded || dirty || busy || library.busy
+    el('libraryUnsaved').hidden = !dirty
+    document.querySelectorAll('[data-library-action]').forEach(button => { button.disabled = blocked })
+    if (library.snapshots) {
+      el('snapshotsPrev').disabled = blocked || library.snapshots.offset === 0
+      el('snapshotsNext').disabled = blocked || library.snapshots.nextOffset === null
+    }
+    if (library.files) {
+      el('filesPrev').disabled = blocked || library.files.offset === 0
+      el('filesNext').disabled = blocked || library.files.nextOffset === null
+    }
+    el('page-backups').setAttribute('aria-busy', String(library.busy))
+  }
+  async function libraryAction(callback) {
+    if (library.busy || busy || !loaded) return
+    if (JSON.stringify(collect()) !== saved) { libraryNotice('请先保存配置，再浏览或准备下载。', true); return }
+    library.busy = true
+    libraryNotice('正在读取仓库，请稍候…')
+    update()
+    try { await callback(); libraryNotice('') }
+    catch (error) { libraryNotice(error.message, true) }
+    finally { library.busy = false; update() }
+  }
+  function pagination(prefix, data, limit) {
+    el(`${prefix}Pagination`).hidden = data.total <= limit
+    el(`${prefix}Count`).textContent = `第 ${Math.floor(data.offset / limit) + 1} 页 · 共 ${data.total} 项`
+  }
+  function renderSnapshots(data) {
+    library.snapshots = data
+    library.loaded = true
+    el('snapshotScope').textContent = `${data.hostname} · ${data.tag}`
+    el('snapshotEmpty').hidden = data.items.length > 0
+    el('snapshotEmpty').textContent = '没有快照。请检查主机名与标签是否匹配，或先通过主人命令初始化并备份。'
+    el('snapshotTable').hidden = !data.items.length
+    el('snapshotRows').replaceChildren(...data.items.map(item => {
+      const row = node('tr')
+      row.dataset.snapshot = item.id
+      row.classList.toggle('selected', library.snapshot?.id === item.id)
+      const time = node('td', date(item.time))
+      const id = node('small', item.id.slice(0, 8))
+      id.title = item.id
+      time.append(id)
+      const operation = node('td')
+      operation.append(action('浏览文件', () => browse(item, '/')))
+      row.append(time, node('td', item.hostname), node('td', item.files ?? '—'), node('td', size(item.bytes)), operation)
+      return row
+    }))
+    pagination('snapshot', data, 30)
+  }
+  function refreshSnapshots(offset = 0) {
+    return libraryAction(async () => renderSnapshots(await request({}, `snapshots?offset=${offset}`, 150000)))
+  }
+  function renderFiles(data) {
+    library.directory = data.path
+    library.files = data
+    el('fileBrowser').hidden = false
+    el('selectedSnapshot').textContent = `${date(library.snapshot.time)} · ${library.snapshot.id.slice(0, 8)}`
+    document.querySelectorAll('[data-snapshot]').forEach(row => row.classList.toggle('selected', row.dataset.snapshot === library.snapshot.id))
+    el('fileEmpty').hidden = data.items.length > 0
+    el('fileTable').hidden = !data.items.length
+    const crumbs = [action('快照根目录', () => browse(library.snapshot, '/'), '')]
+    let current = ''
+    for (const segment of data.path.split('/').filter(Boolean)) {
+      current += `/${segment}`
+      const target = current
+      crumbs.push(node('span', '/'), action(segment, () => browse(library.snapshot, target), ''))
+    }
+    crumbs[crumbs.length - 1].setAttribute('aria-current', 'location')
+    el('breadcrumbs').replaceChildren(...crumbs)
+    el('downloadFolder').hidden = data.path === '/'
+    el('fileRows').replaceChildren(...data.items.map(item => {
+      const row = node('tr')
+      const name = node('td')
+      name.append(node('span', item.type === 'dir' ? '目录' : item.type === 'file' ? '文件' : '链接/特殊', 'file-kind'))
+      name.append(item.type === 'dir' ? action(item.name, () => browse(library.snapshot, item.path), 'file-name') : node('span', item.name))
+      const operation = node('td')
+      if (item.downloadable) operation.append(action(item.type === 'dir' ? '下载 ZIP' : '下载', () => prepareDownload(item.path)))
+      else operation.append(node('span', '随上级目录打包', 'muted'))
+      row.append(name, node('td', item.type === 'file' ? size(item.size) : '—'), node('td', date(item.mtime), 'file-time'), operation)
+      return row
+    }))
+    pagination('file', data, 100)
+  }
+  function browse(snapshot, directory, offset = 0) {
+    return libraryAction(async () => {
+      const query = new URLSearchParams({ snapshot: snapshot.id, path: directory, offset })
+      const data = await request({}, `files?${query}`, 150000)
+      library.snapshot = snapshot
+      renderFiles(data)
+    })
+  }
+  function prepareDownload(selectedPath) {
+    return libraryAction(async () => {
+      const { download } = await request({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshotId: library.snapshot.id, path: selectedPath }) }, 'downloads')
+      library.downloads.push(download)
+      renderDownloads()
+      await refreshDownloads()
+      el('downloadTasks').scrollIntoView({ behavior: 'auto', block: 'nearest' })
+    })
+  }
+  async function downloadFile(item) {
+    try {
+      // 先确认任务仍有效，再交给浏览器原生下载；沿用锅巴支持的 query token 鉴权。
+      const { download } = await request({}, `downloads/${item.id}`)
+      if (download.status !== 'ready') throw new Error('下载尚未准备完成，请刷新任务')
+      let token = window.Guoba?.token?.() || ''
+      if (!token) {
+        try { token = localStorage.getItem('guoba-access-token') || '' } catch { /* 隐私模式可能禁用 storage */ }
+        token ||= params.get('token') || ''
+      }
+      if (!token) throw new Error('登录状态已失效，请重新登录锅巴后下载')
+      const url = new URL(apiUrl(`downloads/${item.id}/file`), location.origin)
+      if (url.origin !== location.origin) throw new Error('下载地址必须与锅巴面板同源')
+      url.searchParams.set('token', token)
+      const link = node('a')
+      link.href = url.href
+      link.download = item.name
+      link.referrerPolicy = 'no-referrer'
+      document.body.append(link)
+      link.click()
+      link.remove()
+      libraryNotice('已交给浏览器下载，可在浏览器下载列表查看进度。')
+    } catch (error) { libraryNotice(error.message, true) }
+  }
+  async function changeDownload(item, cancel) {
+    try {
+      await request({ method: cancel ? 'POST' : 'DELETE' }, `downloads/${item.id}${cancel ? '/cancel' : ''}`)
+      await refreshDownloads()
+    } catch (error) { libraryNotice(error.message, true) }
+  }
+  function renderDownloads() {
+    if (!library.downloads.length) {
+      el('downloadTasks').replaceChildren(node('p', '暂无下载任务。先选择快照或文件。', 'empty-state'))
+      return
+    }
+    el('downloadTasks').replaceChildren(...library.downloads.map(item => {
+      const row = node('div', undefined, 'download-task')
+      row.dataset.state = item.status
+      const info = node('div', undefined, 'download-info')
+      info.append(node('strong', item.name), node('p', `${item.snapshotId.slice(0, 8)} · ${item.path}`))
+      const message = item.status === 'preparing' ? `正在准备 · 已生成 ${size(item.bytes)}`
+        : item.status === 'ready' ? `已就绪 · ${size(item.bytes)} · 保留至 ${date(item.expiresAt)}`
+          : item.status === 'cancelled' ? '已取消准备，临时文件已清理。' : `准备失败 · ${item.error}`
+      info.append(node('p', message))
+      const actions = node('div', undefined, 'download-actions')
+      if (item.status === 'preparing') {
+        const progress = node('progress')
+        progress.setAttribute('aria-label', '正在准备下载')
+        info.append(progress)
+        actions.append(action('取消', () => changeDownload(item, true), 'table-button', false))
+      } else {
+        if (item.status === 'ready') actions.append(action('下载到本机', () => downloadFile(item), 'table-button', false))
+        actions.append(action('清理', () => changeDownload(item, false), 'table-button', false))
+      }
+      row.append(info, actions)
+      return row
+    }))
+  }
+  let pollingDownloads = false
+  let queuedDownloadRefresh = false
+  async function refreshDownloads() {
+    if (pollingDownloads) { queuedDownloadRefresh = true; return }
+    pollingDownloads = true
+    clearTimeout(downloadTimer)
+    try {
+      const response = await request({}, 'downloads')
+      library.downloads = response.downloads
+      renderDownloads()
+    } catch (error) { libraryNotice(`读取下载任务失败：${error.message}`, true) }
+    finally {
+      pollingDownloads = false
+      if (queuedDownloadRefresh) { queuedDownloadRefresh = false; downloadTimer = setTimeout(refreshDownloads, 0) }
+      else if (library.downloads.some(item => item.status === 'preparing')) downloadTimer = setTimeout(refreshDownloads, document.hidden ? 5000 : 1500)
+    }
+  }
+  el('refreshSnapshots').addEventListener('click', () => refreshSnapshots())
+  el('snapshotsPrev').addEventListener('click', () => refreshSnapshots(Math.max(0, library.snapshots.offset - 30)))
+  el('snapshotsNext').addEventListener('click', () => refreshSnapshots(library.snapshots.nextOffset))
+  el('filesPrev').addEventListener('click', () => browse(library.snapshot, library.directory, Math.max(0, library.files.offset - 100)))
+  el('filesNext').addEventListener('click', () => browse(library.snapshot, library.directory, library.files.nextOffset))
+  el('downloadSnapshot').addEventListener('click', () => prepareDownload('/'))
+  el('downloadFolder').addEventListener('click', () => prepareDownload(library.directory))
+  el('refreshDownloads').addEventListener('click', refreshDownloads)
 
   document.querySelectorAll('[data-test]').forEach(button => button.addEventListener('click', async () => {
     if (!loaded || busy) return

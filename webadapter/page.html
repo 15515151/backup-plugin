@@ -18,6 +18,7 @@
         <button type="button" class="nav-item active" data-tab="repository" aria-current="page"><span>存储仓库</span><span aria-hidden="true">↗</span></button>
         <button type="button" class="nav-item" data-tab="oss"><span>阿里云 OSS</span><span aria-hidden="true">↗</span></button>
         <button type="button" class="nav-item" data-tab="schedule"><span>备份策略</span><span aria-hidden="true">↗</span></button>
+        <button type="button" class="nav-item" data-tab="backups"><span>备份文件</span><span aria-hidden="true">↗</span></button>
       </nav>
       <div class="sidebar-note"><span class="small-label">默认排除</span><ul id="defaultExcludes"><li>正在读取…</li></ul><p>运行缓存与恢复文件也会自动排除。</p></div>
       <div class="sidebar-bottom"><span class="status-dot"></span>加密快照 · 块级去重</div>
@@ -101,6 +102,35 @@
         </fieldset>
         <footer class="save-bar"><div><strong id="saveState" role="status">正在读取配置…</strong><small>主人命令：#初始化备份 · #备份 · #备份状态</small></div><button id="saveBtn" class="button primary" type="submit" disabled>保存配置</button></footer>
       </form>
+      <section class="config-page library-page" id="page-backups" aria-labelledby="libraryTitle" hidden>
+        <div class="section-title"><div><h2 id="libraryTitle">备份文件</h2><p>选择快照，浏览并取出需要的文件。</p></div><button type="button" id="refreshSnapshots" class="button secondary" data-library-action>刷新列表</button></div>
+        <p class="hint library-hint">使用已保存的仓库配置，显示当前主机名与快照标签下的备份。单个文件按原格式下载，文件夹和整份快照导出为 ZIP。</p>
+        <p id="libraryUnsaved" class="notice" hidden>配置有未保存的修改，请先保存配置，再浏览或准备下载。</p>
+        <div id="browserNotice" class="notice" role="status" aria-live="polite" hidden></div>
+        <div class="list-heading"><h3>快照列表</h3><span id="snapshotScope" class="muted"></span></div>
+        <p id="snapshotEmpty" class="empty-state">正在读取快照…</p>
+        <div class="table-scroll"><table class="data-table snapshot-table" id="snapshotTable" hidden>
+          <thead><tr><th scope="col">备份时间 / 快照 ID</th><th scope="col">主机</th><th scope="col">文件数</th><th scope="col">原始大小</th><th scope="col">操作</th></tr></thead>
+          <tbody id="snapshotRows"></tbody>
+        </table></div>
+        <div class="pagination" id="snapshotPagination" hidden><button type="button" class="button secondary" id="snapshotsPrev" data-library-action>上一页</button><span id="snapshotCount"></span><button type="button" class="button secondary" id="snapshotsNext" data-library-action>下一页</button></div>
+
+        <div id="fileBrowser" hidden>
+          <div class="divider"></div>
+          <div class="list-heading"><div><h3>快照内容</h3><p id="selectedSnapshot" class="muted"></p></div><button type="button" class="button secondary" id="downloadSnapshot" data-library-action>下载整份快照 ZIP</button></div>
+          <div class="file-toolbar"><div id="breadcrumbs" class="breadcrumbs" role="navigation" aria-label="快照目录"></div><button type="button" class="button secondary" id="downloadFolder" data-library-action hidden>下载当前文件夹 ZIP</button></div>
+          <p id="fileEmpty" class="empty-state" hidden>这个文件夹是空的。</p>
+          <div class="table-scroll"><table class="data-table file-table" id="fileTable">
+            <thead><tr><th scope="col">名称</th><th scope="col">大小</th><th scope="col" class="file-time">修改时间</th><th scope="col">操作</th></tr></thead>
+            <tbody id="fileRows"></tbody>
+          </table></div>
+          <div class="pagination" id="filePagination" hidden><button type="button" class="button secondary" id="filesPrev" data-library-action>上一页</button><span id="fileCount"></span><button type="button" class="button secondary" id="filesNext" data-library-action>下一页</button></div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="list-heading"><div><h3>下载任务</h3><p class="muted">准备完成后点击下载。临时文件保留 30 分钟，最多保留 3 个任务。</p></div><button type="button" class="button secondary" id="refreshDownloads">刷新任务</button></div>
+        <div id="downloadTasks" aria-live="polite"><p class="empty-state">暂无下载任务。先选择快照或文件。</p></div>
+      </section>
     </main>
   </div>
 </body>

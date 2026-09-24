@@ -95,6 +95,37 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .save-bar { position: sticky; bottom: 0; z-index: 2; padding: 18px 0; display: flex; align-items: center; justify-content: space-between; gap: 15px; background: var(--bg); border-top: 1px solid var(--line); }
 .save-bar strong { font-size: 12px; font-weight: 500; }
 .save-bar small { display: block; color: var(--muted); font-size: 10px; margin-top: 5px; }
+.library-hint { margin: 0 0 20px; }
+.muted { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.list-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 20px 0 14px; }
+.list-heading p { margin: 5px 0 0; }
+.table-scroll { width: 100%; overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th { padding: 10px 12px; text-align: left; color: var(--muted); font-size: 11px; font-weight: 500; background: var(--bg); border-bottom: 1px solid var(--line); white-space: nowrap; }
+.data-table td { padding: 13px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; overflow-wrap: anywhere; }
+.data-table tr.selected { background: var(--soft); }
+.data-table small { display: block; margin-top: 5px; color: var(--muted); font: 11px var(--mono); }
+.data-table td:last-child { white-space: nowrap; }
+.snapshot-table { min-width: 560px; }
+.table-button { border: 1px solid var(--line); padding: 5px 10px; border-radius: 4px; background: var(--surface); color: var(--accent); font-size: 12px; }
+.table-button:hover { background: var(--soft); }
+.file-name { border: 0; padding: 0; text-align: left; background: transparent; color: var(--accent); overflow-wrap: anywhere; }
+.file-kind { display: inline-block; padding: 2px 5px; margin-right: 8px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.file-toolbar { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 0; }
+.breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.breadcrumbs button { background: transparent; border: 0; color: var(--accent); font: 12px var(--mono); padding: 4px; overflow-wrap: anywhere; }
+.breadcrumbs span { color: var(--muted); }
+.pagination { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 14px; font-size: 11px; color: var(--muted); }
+.pagination .button, .library-page .list-heading .button, .file-toolbar .button { font-size: 11px; padding: 7px 11px; }
+.empty-state { margin: 0; padding: 28px 16px; border: 1px dashed var(--line); border-radius: 5px; color: var(--muted); text-align: center; font-size: 12px; }
+.download-task { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 5px; padding: 15px; margin-top: 10px; }
+.download-task[data-state="error"] { border-left-color: var(--error); }
+.download-task strong { font-size: 13px; overflow-wrap: anywhere; }
+.download-task p { margin: 5px 0 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.download-task[data-state="error"] p { color: var(--error); }
+.download-info { min-width: 0; }
+.download-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.download-task progress { display: block; width: min(240px, 100%); height: 5px; margin-top: 10px; accent-color: var(--accent); }
 @media (max-width: 1050px) {
   .app { grid-template-columns: 180px minmax(0, 1fr); }
   .sidebar { padding: 26px 14px; }
@@ -108,7 +139,7 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
   .brand { font-size: 20px; }
   .brand svg { width: 30px; height: 30px; }
   .brand small { display: inline; margin-left: 10px; font-size: 11px; }
-  nav { grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  nav { grid-template-columns: repeat(2, 1fr); gap: 5px; }
   .nav-item { padding: 10px 8px; font-size: 12px; justify-content: center; }
   .nav-item > span:last-child, .sidebar-note, .sidebar-bottom { display: none; }
   main { padding: 24px 16px 0; }
@@ -125,5 +156,11 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
   .save-bar small { max-width: 180px; }
   .save-bar .button { padding: 10px 14px; }
   .diagnostic-action { align-items: stretch; flex-direction: column; gap: 12px; }
+  .file-time { display: none; }
+  .file-table { min-width: 340px; }
+  .data-table td, .data-table th { padding: 10px 8px; }
+  .file-toolbar, .download-task { align-items: flex-start; flex-direction: column; }
+  .list-heading { align-items: flex-start; }
+  .list-heading .button { white-space: normal; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::after { transition: none !important; } }
