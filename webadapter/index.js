@@ -1,7 +1,8 @@
 import { createPanelConfig } from '../lib/panel-config.js'
+import { createDiagnostics } from '../lib/diagnostics.js'
 
 // 由锅巴扩展页面宿主提供鉴权、静态资源与 API 路由，不单独监听端口。
-export function init(ctx, { store = createPanelConfig() } = {}) {
+export function init(ctx, { store = createPanelConfig(), diagnostics = createDiagnostics() } = {}) {
   ctx.registerPage({
     id: 'restic-backup', title: 'restic 备份', icon: 'mdi:backup-restore', priority: 45,
     src: 'page.html', style: 'page.css', script: 'client.js',
@@ -16,4 +17,15 @@ export function init(ctx, { store = createPanelConfig() } = {}) {
     try { res.json({ ok: true, ...await store.save(req.body) }) }
     catch (error) { res.status(400).json({ ok: false, error: error.message }) }
   })
+  for (const kind of ['restic', 'oss']) {
+    ctx.registerApi('post', `/backup-plugin/test/${kind}`, async (req, res) => {
+      res.set?.('Cache-Control', 'no-store')
+      try {
+        const config = await store.resolve(req.body)
+        res.json({ ok: true, result: await diagnostics.test(kind, config) })
+      } catch (error) {
+        res.status(error.code === 'BUSY' ? 409 : 400).json({ ok: false, error: error.message })
+      }
+    })
+  }
 }

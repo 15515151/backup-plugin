@@ -46,6 +46,10 @@
               <label class="field"><span>存储位置</span><select name="backend"><option value="oss">阿里云 OSS</option><option value="local">本地仓库</option></select><small>两种方式都使用 restic 加密仓库。</small></label>
               <label class="field wide" id="localField" hidden><span>本地仓库目录</span><input name="localRepository" placeholder="/srv/jiuli-backups" spellcheck="false"><small>必须位于机器人目录之外，避免重复备份仓库本身。</small></label>
             </div>
+            <div class="diagnostic">
+              <div class="diagnostic-action"><p id="resticTestHelp">使用当前填写的路径检查服务器上的 restic 版本，无需保存配置或填写仓库密码。</p><button type="button" class="button secondary" data-test="restic" aria-describedby="resticTestHelp">测试 restic</button></div>
+              <p class="diagnostic-result" data-test-result="restic" role="status" aria-live="polite" hidden></p>
+            </div>
             <div class="divider"></div>
             <h3>仓库密码</h3><p class="section-help">这是解密备份所需的密码，请在备份仓库之外保存好它。</p>
             <div class="form-grid">
@@ -71,6 +75,10 @@
               <label class="field wide"><span>临时凭据 Token <em>可选</em></span><input name="oss.sessionToken" type="password" autocomplete="new-password" data-secret placeholder="仅使用 STS 临时凭据时填写"></label>
             </div>
             <p class="hint">运行环境中的 AWS_ACCESS_KEY_ID、AWS_SECRET_ACCESS_KEY 和 AWS_SESSION_TOKEN 优先于这里的配置。</p>
+            <div class="diagnostic">
+              <div class="diagnostic-action"><p id="ossTestHelp">使用当前填写的 OSS 配置测试连接，已有凭据占位符会保留原值。无需保存或初始化仓库；仅验证连接、凭据及列举权限，不上传文件。</p><button type="button" class="button secondary" data-test="oss" aria-describedby="ossTestHelp">测试 OSS 连接</button></div>
+              <p class="diagnostic-result" data-test-result="oss" role="status" aria-live="polite" hidden></p>
+            </div>
           </section>
 
           <section class="config-page" id="page-schedule" aria-labelledby="scheduleTitle" hidden>

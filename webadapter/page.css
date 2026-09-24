@@ -78,6 +78,13 @@ textarea { resize: vertical; min-height: 100px; }
 h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .section-help { margin-bottom: 19px; }
 .hint { font-size: 11px; color: var(--muted); padding: 12px 14px; border-left: 2px solid var(--line); margin: 23px 0 0; background: var(--bg); overflow-wrap: anywhere; }
+.diagnostic { margin-top: 22px; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.diagnostic-action { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.diagnostic-action p { margin: 0; color: var(--muted); font-size: 12px; }
+.diagnostic-action .button { font-size: 12px; }
+.diagnostic-result { margin: 14px 0 0; padding: 12px; border-radius: 5px; background: var(--soft); overflow-wrap: anywhere; font-size: 12px; }
+.diagnostic-result[data-state="success"] { color: var(--accent); }
+.diagnostic-result[data-state="error"] { color: var(--error); background: var(--error-bg); }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 18px; background: var(--soft); border: 1px solid var(--line); border-radius: 6px; margin-bottom: 24px; }
 .switch-row strong { font-size: 13px; }
 .switch-row small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
@@ -117,5 +124,6 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
   .section-tag { display: none; }
   .save-bar small { max-width: 180px; }
   .save-bar .button { padding: 10px 14px; }
+  .diagnostic-action { align-items: stretch; flex-direction: column; gap: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::after { transition: none !important; } }

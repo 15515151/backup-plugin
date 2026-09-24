@@ -147,3 +147,62 @@ test('WebAdapter registers declared assets and configuration endpoints', async t
   assert.equal(bad.statusCode, 400)
   assert.equal(bad.data.ok, false)
 })
+
+test('diagnostics resolve unsaved input and secret masks without saving or rescheduling', async t => {
+  const { store, pluginDir } = await fixture(t)
+  await store.save({ password: 'private-password', 'oss.accessKeyId': 'private-id', 'oss.accessKeySecret': 'private-secret' })
+  let notifications = 0
+  const unsubscribe = subscribeConfig(() => { notifications++ }, pluginDir)
+  t.after(unsubscribe)
+  const before = await fs.readFile(path.join(pluginDir, 'config.json'), 'utf8')
+  const shown = await store.get()
+  const candidate = await store.resolve({ ...shown.config, resticPath: './new-restic', oss: { ...shown.config.oss, bucket: 'unsaved-bucket' } })
+  assert.equal(candidate.resticPath, path.resolve(pluginDir, 'new-restic'))
+  assert.equal(candidate.oss.bucket, 'unsaved-bucket')
+  assert.equal(candidate.oss.accessKeySecret, 'private-secret')
+  assert.equal(candidate.password, 'private-password')
+  assert.equal((await store.resolve({ 'oss.accessKeySecret': '' })).oss.accessKeySecret, '')
+  assert.equal((await store.resolve({ 'oss.accessKeySecret': 'new-secret' })).oss.accessKeySecret, 'new-secret')
+  assert.equal(notifications, 0)
+  assert.equal(await fs.readFile(path.join(pluginDir, 'config.json'), 'utf8'), before)
+})
+
+test('diagnostic routes use current input, return only results and handle failure and busy states', async t => {
+  const { store, pluginDir } = await fixture(t)
+  await store.save({ 'oss.accessKeySecret': 'private-secret' })
+  const before = await fs.readFile(path.join(pluginDir, 'config.json'), 'utf8')
+  const routes = new Map()
+  let calls = 0
+  let failure
+  init({ registerPage() {}, registerApi: (method, route, handler) => routes.set(`${method} ${route}`, handler) }, {
+    store,
+    diagnostics: { async test(kind, config) {
+      calls++
+      if (failure) throw failure
+      assert.ok(['restic', 'oss'].includes(kind))
+      assert.equal(config.oss.accessKeySecret, 'private-secret')
+      assert.equal(config.oss.bucket, 'unsaved-bucket')
+      return { message: 'test passed', elapsedMs: 12 }
+    } },
+  })
+  const response = () => ({ statusCode: 200, headers: {}, set(name, value) { this.headers[name] = value; return this }, status(code) { this.statusCode = code; return this }, json(data) { this.data = data; return this } })
+  for (const kind of ['restic', 'oss']) {
+    const res = response()
+    await routes.get(`post /backup-plugin/test/${kind}`)({ body: { oss: { bucket: 'unsaved-bucket', accessKeySecret: SECRET_MASK } } }, res)
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.headers['Cache-Control'], 'no-store')
+    assert.deepEqual(res.data, { ok: true, result: { message: 'test passed', elapsedMs: 12 } })
+  }
+  const bad = response()
+  await routes.get('post /backup-plugin/test/oss')({ body: null }, bad)
+  assert.equal(bad.statusCode, 400)
+  assert.equal(calls, 2)
+  for (const [code, status] of [['BUSY', 409], ['FAILED', 400]]) {
+    failure = Object.assign(new Error('test unavailable'), { code })
+    const res = response()
+    await routes.get('post /backup-plugin/test/restic')({ body: {} }, res)
+    assert.equal(res.statusCode, status)
+    assert.deepEqual(res.data, { ok: false, error: 'test unavailable' })
+  }
+  assert.equal(await fs.readFile(path.join(pluginDir, 'config.json'), 'utf8'), before)
+})

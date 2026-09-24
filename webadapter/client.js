@@ -16,8 +16,17 @@
   const assetIndex = location.pathname.indexOf('/web-page/')
   const rawBase = params.get('__webBase') || (assetIndex >= 0 ? location.pathname.slice(0, assetIndex) : '')
   const base = new URL(rawBase || '/', location.origin)
-  const apiUrl = window.Guoba?.apiUrl ? window.Guoba.apiUrl('/backup-plugin/config')
-    : `${base.pathname.replace(/\/+$/, '')}/api/backup-plugin/config`
+  const apiUrl = route => window.Guoba?.apiUrl ? window.Guoba.apiUrl(`/backup-plugin/${route}`)
+    : `${base.pathname.replace(/\/+$/, '')}/api/backup-plugin/${route}`
+
+  function clearTests(kind) {
+    document.querySelectorAll('[data-test-result]').forEach(result => {
+      if (kind && result.dataset.testResult !== kind) return
+      result.hidden = true
+      result.textContent = ''
+      result.removeAttribute('data-state')
+    })
+  }
 
   function showNotice(message, error = false) {
     notice.textContent = message
@@ -62,6 +71,7 @@
   }
 
   function fill(data) {
+    clearTests()
     for (const field of fields) {
       const [key, sub] = field.name.split('.')
       const value = sub ? data.config[key]?.[sub] : data.config[key]
@@ -80,17 +90,17 @@
     saved = JSON.stringify(collect())
   }
 
-  async function request(options = {}) {
+  async function request(options = {}, route = 'config') {
     if (base.origin !== location.origin) throw new Error('面板接口必须与当前页面同源')
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 20000)
     try {
-      const response = await fetch(apiUrl, { ...options, signal: controller.signal, cache: 'no-store', credentials: 'same-origin' })
+      const response = await fetch(apiUrl(route), { ...options, signal: controller.signal, cache: 'no-store', credentials: 'same-origin' })
       const data = await response.json().catch(() => ({}))
       if (!response.ok || !data.ok) throw new Error(data.error || data.message || `请求失败（${response.status}），请检查面板登录状态`)
       return data
     } catch (error) {
-      if (error.name === 'AbortError') throw new Error('请求超时，请重新读取配置确认是否保存成功')
+      if (error.name === 'AbortError') throw new Error(route.startsWith('test/') ? '测试请求超时，请稍后重试' : '请求超时，请重新读取配置确认是否保存成功')
       throw error
     } finally { clearTimeout(timer) }
   }
@@ -105,6 +115,36 @@
     finally { busy = false; update() }
   }
 
+  document.querySelectorAll('[data-test]').forEach(button => button.addEventListener('click', async () => {
+    if (!loaded || busy) return
+    const kind = button.dataset.test
+    const result = document.querySelector(`[data-test-result="${kind}"]`)
+    const label = button.textContent
+    const current = collect()
+    // 检测只提交本组字段，未填完的密码、cron 等不会阻止连接测试。
+    const data = kind === 'restic' ? { resticPath: current.resticPath } : { oss: current.oss }
+    busy = true
+    update()
+    button.textContent = '正在测试…'
+    result.hidden = false
+    result.dataset.state = 'pending'
+    result.setAttribute('aria-busy', 'true')
+    result.textContent = kind === 'restic' ? '正在检查服务器上的 restic…' : '正在连接 OSS，验证凭据与列举权限…'
+    try {
+      const response = await request({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }, `test/${kind}`)
+      result.dataset.state = 'success'
+      result.textContent = `测试通过 · ${response.result.message}（耗时 ${(response.result.elapsedMs / 1000).toFixed(2)} 秒）`
+    } catch (error) {
+      result.dataset.state = 'error'
+      result.textContent = `测试失败 · ${error.message}`
+    } finally {
+      result.setAttribute('aria-busy', 'false')
+      button.textContent = label
+      busy = false
+      update()
+    }
+  }))
+
   document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => selectTab(button.dataset.tab)))
   document.querySelector('.brand').addEventListener('click', () => selectTab('repository'))
   document.querySelectorAll('[data-secret]').forEach(input => input.addEventListener('focus', () => { if (input.value === '********') input.select() }))
@@ -113,7 +153,11 @@
     input.type = input.type === 'password' ? 'text' : 'password'
     button.textContent = input.type === 'password' ? '显示' : '隐藏'
   }))
-  form.addEventListener('input', update)
+  form.addEventListener('input', event => {
+    if (event.target.name === 'resticPath') clearTests('restic')
+    if (event.target.name?.startsWith('oss.')) clearTests('oss')
+    update()
+  })
   form.addEventListener('change', update)
   // 隐藏分组中的必填项出错时先切换到对应分组，浏览器才能聚焦输入框。
   form.addEventListener('invalid', event => {
